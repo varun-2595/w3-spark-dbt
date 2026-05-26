@@ -1,0 +1,12 @@
+taxi_warehouse:
+  outputs:
+    dev:
+      type: postgres
+      host: postgres
+      port: 5432
+      user: postgres
+      pass: postgres
+      dbname: warehouse_db
+      schema: public
+      threads: 4
+  target: dev

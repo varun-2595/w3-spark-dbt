@@ -1,0 +1,30 @@
+name: 'taxi_warehouse'
+version: '1.0.0'
+config-version: 2
+
+# Profile to connect to the database (configured in profiles.yml)
+profile: 'taxi_warehouse'
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  taxi_warehouse:
+    staging:
+      +materialized: view
+      +schema: staging
+    marts:
+      +materialized: table
+      +schema: marts
+
+snapshots:
+  taxi_warehouse:
+    +target_schema: snapshots
