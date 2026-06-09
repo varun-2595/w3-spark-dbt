@@ -44,6 +44,9 @@ services:
     container_name: w3_rest_catalog
     ports:
       - "8181:8181"
+    volumes:
+      - ./postgresql-42.7.3.jar:/usr/lib/iceberg-rest/postgresql-42.7.3.jar
+    command: ["java", "-cp", "iceberg-rest-adapter.jar:postgresql-42.7.3.jar", "org.apache.iceberg.rest.RESTCatalogServer"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -62,7 +65,9 @@ services:
       - CATALOG_S3_ENABLE__TRAILING__CHECKSUMS=false
       - CATALOG_S3_REGION=us-east-1
       - CATALOG_CATALOG__IMPL=org.apache.iceberg.jdbc.JdbcCatalog
-      - "CATALOG_URI=jdbc:sqlite::memory:"
+      - "CATALOG_URI=jdbc:postgresql://postgres:5432/catalog_db"
+      - CATALOG_JDBC_USER=postgres
+      - CATALOG_JDBC_PASSWORD=postgres
       - AWS_ACCESS_KEY_ID=minioadmin
       - AWS_SECRET_ACCESS_KEY=minioadmin
       - AWS_REGION=us-east-1

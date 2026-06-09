@@ -62,6 +62,10 @@ def generate_taxi_records(num_records=1000, num_duplicates=100, seed=42):
         "driver_name": np.random.choice(DRIVERS, size=num_records)
     })
     
+    # Ensure microsecond precision for Spark compatibility
+    df["tpep_pickup_datetime"] = pd.to_datetime(df["tpep_pickup_datetime"]).astype("datetime64[us]")
+    df["tpep_dropoff_datetime"] = pd.to_datetime(df["tpep_dropoff_datetime"]).astype("datetime64[us]")
+
     # Enforce trip distance positive
     df["trip_distance"] = df["trip_distance"].clip(lower=0.1)
     

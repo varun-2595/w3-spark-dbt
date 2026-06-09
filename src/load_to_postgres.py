@@ -16,6 +16,11 @@ def load_data():
     with engine.connect() as conn:
         logger.info("Creating schema 'raw' if not exists...")
         conn.execute(text("CREATE SCHEMA IF NOT EXISTS raw;"))
+        logger.info("Dropping existing raw tables with CASCADE to clean up dependent views...")
+        conn.execute(text("DROP TABLE IF EXISTS raw.taxi_zones CASCADE;"))
+        conn.execute(text("DROP TABLE IF EXISTS raw.taxi_trips CASCADE;"))
+        logger.info("Dropping historical snapshots schema to ensure clean state...")
+        conn.execute(text("DROP SCHEMA IF EXISTS snapshots CASCADE;"))
         conn.commit()
         
     # Paths
