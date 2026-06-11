@@ -18,8 +18,8 @@ Every file in this folder except the Spark UI screenshots is generated
 
 1. Start the job with the UI held open after completion:
    ```bash
-   docker exec -u root -e KEEP_UI_SECONDS=600 spark-master /opt/spark/bin/spark-submit \
-     --packages org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.2,org.apache.hadoop:hadoop-aws:3.3.4 \
+   docker exec -u root -e KEEP_UI_SECONDS=600 spark-master /opt/bitnami/spark/bin/spark-submit \
+     --packages org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.2,org.apache.iceberg:iceberg-aws-bundle:1.5.2,org.apache.hadoop:hadoop-aws:3.3.4 \
      /opt/spark/workspace/src/pyspark_pipeline.py
    ```
 2. While it runs (or during the 10-minute hold), open:

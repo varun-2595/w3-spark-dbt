@@ -9,6 +9,7 @@ Environment overrides (all optional — defaults target the Docker cluster):
     TLC_DATA_DIR      dir containing yellow_tripdata_*.parquet   (default /opt/spark/workspace/data)
     ZONE_LOOKUP_PATH  zone lookup CSV path                       (default s3a://warehouse/lookup/taxi_zone_lookup.csv)
     EVIDENCE_DIR      where evidence files are written           (default /opt/spark/workspace/docs/evidence)
+    BENCH_DIR         scratch dir for the coalesce write demo    (default /opt/spark/workspace/.bench_tmp)
     ICEBERG_CATALOG   Iceberg catalog name                       (default demo)
     SKIP_ICEBERG      set to 1 to skip Iceberg writes (local smoke-tests only)
     KEEP_UI_SECONDS   keep SparkSession alive N seconds after completion
@@ -17,10 +18,11 @@ Environment overrides (all optional — defaults target the Docker cluster):
 
 import os
 import glob
+import shutil
 import time
 import logging
 from statistics import mean
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import (
@@ -39,12 +41,14 @@ logger = logging.getLogger("PySparkPipeline")
 DATA_DIR = os.environ.get("TLC_DATA_DIR", "/opt/spark/workspace/data")
 LOOKUP_PATH = os.environ.get("ZONE_LOOKUP_PATH", "s3a://warehouse/lookup/taxi_zone_lookup.csv")
 EVIDENCE_DIR = os.environ.get("EVIDENCE_DIR", "/opt/spark/workspace/docs/evidence")
+BENCH_DIR = os.environ.get("BENCH_DIR", "/opt/spark/workspace/.bench_tmp")
 ICEBERG_CATALOG = os.environ.get("ICEBERG_CATALOG", "demo")
 SKIP_ICEBERG = os.environ.get("SKIP_ICEBERG", "0") == "1"
 KEEP_UI_SECONDS = int(os.environ.get("KEEP_UI_SECONDS", "0"))
 
 SILVER_TABLE = f"{ICEBERG_CATALOG}.nyc_taxi.trips_silver"
 GOLD_TABLE = f"{ICEBERG_CATALOG}.nyc_taxi.trips_gold"
+GOLD_ROLLING_TABLE = f"{ICEBERG_CATALOG}.nyc_taxi.trips_gold_rolling_7d"
 
 # Normalized column spec used to build the trip fingerprint IDENTICALLY in the
 # DataFrame API, Spark SQL, and dbt/PostgreSQL (see dbt stg_taxi_trips.sql).
@@ -83,6 +87,13 @@ def df_to_text(df: DataFrame, num_rows: int = 20, truncate: int = 60) -> str:
     return df._jdf.showString(num_rows, truncate, False)
 
 
+def time_noop_write(df: DataFrame) -> float:
+    """Times the FULL execution of a DataFrame against a no-op sink."""
+    start = time.time()
+    df.write.format("noop").mode("overwrite").save()
+    return time.time() - start
+
+
 class EvidenceCollector:
     """Writes verbatim evidence artifacts (plans, timings, diffs) to disk."""
 
@@ -111,7 +122,15 @@ class SparkSessionManager:
 
     def get_or_create_session(self) -> SparkSession:
         logger.info(f"Initializing SparkSession: '{self.app_name}'...")
-        self.spark = SparkSession.builder.appName(self.app_name).getOrCreate()
+        try:
+            self.spark = SparkSession.builder.appName(self.app_name).getOrCreate()
+        except Exception as e:
+            raise RuntimeError(
+                "Failed to create SparkSession. Common causes: the standalone "
+                "master is unreachable (is docker-compose up and is "
+                "spark.master set to spark://spark-master:7077?), or required "
+                "--packages could not be resolved. Original error: " + str(e)
+            ) from e
         self.spark.sparkContext.setLogLevel("WARN")
         return self.spark
 
@@ -156,30 +175,49 @@ class DataProfiler:
         row_count = df.count()
         partition_count = df.rdd.getNumPartitions()
 
-        # True partition-level skew: record-count distribution across partitions
+        # True partition-level skew: record-count distribution across ALL
+        # partitions. groupBy(spark_partition_id()) only returns partitions
+        # that contain rows, so empty partitions are reinstated explicitly —
+        # hiding them would understate imbalance.
         part_counts = (
             df.groupBy(spark_partition_id().alias("partition_id"))
             .count()
             .orderBy("partition_id")
         )
-        rows = part_counts.collect()
-        counts = [r["count"] for r in rows]
-        avg = mean(counts) if counts else 0
-        skew_ratio = (max(counts) / avg) if avg else 0
+        populated = {r["partition_id"]: r["count"] for r in part_counts.collect()}
+        all_counts = [populated.get(i, 0) for i in range(partition_count)]
+        empty_partitions = sum(1 for c in all_counts if c == 0)
+        avg_all = mean(all_counts) if all_counts else 0
+        skew_ratio = (max(all_counts) / avg_all) if avg_all else 0
+        nonzero = [c for c in all_counts if c > 0]
+
+        table_lines = ["| partition_id | rows |", "|---|---|"]
+        table_lines += [f"| {i} | {c:,} |" for i, c in enumerate(all_counts)]
 
         lines = [
-            f"Dataset:          {dataset_name}",
-            f"Total rows:       {row_count:,}",
-            f"Partition count:  {partition_count}",
+            f"Dataset:              {dataset_name}",
+            f"Total rows:           {row_count:,}",
+            f"Partition count:      {partition_count}",
+            f"Populated partitions: {len(nonzero)}",
+            f"EMPTY partitions:     {empty_partitions}"
+            + (
+                "  <-- most partitions carry no rows; row distribution at read"
+                " time follows parquet row-group boundaries, not an even split"
+                if empty_partitions > partition_count / 2
+                else ""
+            ),
             "",
-            "Rows per partition (data skew check):",
-            df_to_text(part_counts, num_rows=max(len(rows), 20)),
+            "Rows per partition (ALL partitions, including empty ones):",
+            *table_lines,
             "",
-            f"min rows/partition:  {min(counts):,}" if counts else "",
-            f"max rows/partition:  {max(counts):,}" if counts else "",
-            f"avg rows/partition:  {avg:,.1f}",
-            f"skew ratio (max/avg): {skew_ratio:.3f}  "
-            f"({'no significant skew' if skew_ratio < 1.5 else 'SKEW DETECTED'})",
+            f"min rows/partition (all):       {min(all_counts):,}",
+            f"max rows/partition (all):       {max(all_counts):,}",
+            f"avg rows/partition (all):       {avg_all:,.1f}",
+            f"avg rows/partition (populated): {mean(nonzero):,.1f}" if nonzero else "",
+            f"skew ratio max/avg (all):       {skew_ratio:.3f}",
+            "Interpretation: ratio near 1.0 over POPULATED partitions means the",
+            "populated partitions are balanced, but a high empty-partition count",
+            "still indicates uneven placement and wasted task slots.",
             "",
             "Schema:",
             df._jdf.schema().treeString(),
@@ -230,13 +268,16 @@ class TaxiDataTransformer:
     @staticmethod
     def clean_and_deduplicate(df: DataFrame) -> DataFrame:
         """
-        - Computes trip duration in minutes.
-        - Masks driver name to initials (only when the column exists — real NYC
-          TLC data contains no driver PII).
-        - Generates a SHA-256 trip_fingerprint over ALL normalized business
-          columns; rows sharing a fingerprint are exact duplicate records, so
-          dropDuplicates on it is deterministic.
-        - Filters out negative fares, invalid durations, out-of-bounds zones.
+        DataFrame API transformation chain exercising filter, select,
+        withColumn, and dropDuplicates:
+        - withColumn: trip duration in minutes + SHA-256 trip_fingerprint over
+          ALL normalized business columns (rows sharing a fingerprint are
+          exact duplicate records, so dropDuplicates on it is deterministic).
+        - filter: drops negative fares, invalid durations, out-of-bounds zones.
+        - dropDuplicates: deduplicates on the fingerprint.
+        - select: explicit final projection establishing a stable column order.
+        - Masks driver name to initials (only when the column exists — real
+          NYC TLC data contains no driver PII).
         """
         logger.info("Applying DataFrame API transformations and cleaning rules...")
 
@@ -257,6 +298,10 @@ class TaxiDataTransformer:
             )
             .dropDuplicates(["trip_fingerprint"])
         )
+
+        # Explicit select: stable, documented column order for downstream layers
+        projection = [c for c in df.columns] + ["trip_duration_minutes", "trip_fingerprint"]
+        df_cleaned = df_cleaned.select(*projection)
 
         # PII masking applies only to synthetic fixtures that carry driver_name;
         # real TLC data has no driver PII.
@@ -283,7 +328,7 @@ class TaxiDataTransformer:
         """
         Rolling 7-day trip volume per pickup zone.
 
-        NOTE on precision (review item 11): the range frame operates on
+        NOTE on precision: the range frame operates on
         unix_timestamp(tpep_pickup_datetime), which ALWAYS returns whole
         SECONDS since epoch (a BIGINT) regardless of the microsecond precision
         of the underlying timestamp column. The frame bounds (-7*86400, 0) are
@@ -481,7 +526,7 @@ class JoinOptimizer:
         self.spark = spark
 
     def benchmark_joins(self, df_trips: DataFrame, df_zones: DataFrame,
-                        evidence: EvidenceCollector) -> DataFrame:
+                        evidence: EvidenceCollector, runs: int = 2) -> DataFrame:
         logger.info("JOINS BENCHMARK & EXPLAIN (broadcast vs sort-merge)")
 
         join_cond = df_trips.PULocationID == df_zones.LocationID
@@ -494,15 +539,36 @@ class JoinOptimizer:
         self.spark.conf.set("spark.sql.autoBroadcastJoinThreshold", -1)
         df_sort_merge = df_trips.hint("merge").join(df_zones, join_cond, "inner")
         sort_merge_plan = explain_text(df_sort_merge, "formatted")
+
+        # ---- Wall-clock timing: plans alone don't show the latency win ----
+        # Warmup run for each variant is executed and DISCARDED so JIT/cache
+        # warmup cost doesn't bias either side.
+        logger.info("Timing broadcast join (1 warmup + %d timed runs)...", runs)
+        self.spark.conf.set("spark.sql.autoBroadcastJoinThreshold", 10 * 1024 * 1024)
+        time_noop_write(df_broadcast)  # warmup, discarded
+        broadcast_times = [time_noop_write(df_broadcast) for _ in range(runs)]
+
+        logger.info("Timing sort-merge join (1 warmup + %d timed runs)...", runs)
+        self.spark.conf.set("spark.sql.autoBroadcastJoinThreshold", -1)
+        time_noop_write(df_sort_merge)  # warmup, discarded
+        sort_merge_times = [time_noop_write(df_sort_merge) for _ in range(runs)]
         self.spark.conf.set("spark.sql.autoBroadcastJoinThreshold", 10 * 1024 * 1024)
 
         has_bhj = "BroadcastHashJoin" in broadcast_plan
         has_smj = "SortMergeJoin" in sort_merge_plan
+        speedup = (mean(sort_merge_times) - mean(broadcast_times)) / mean(sort_merge_times) * 100
         verdict = "\n".join([
             "CHECKPOINT VERIFICATION",
             "-" * 78,
             f"'BroadcastHashJoin' present in broadcast-join plan:  {'YES — PASS' if has_bhj else 'NO — FAIL'}",
             f"'SortMergeJoin' present in non-broadcast plan:       {'YES' if has_smj else 'NO'}",
+            "",
+            "WALL-CLOCK TIMING (full execution to noop sink; 1 discarded warmup each)",
+            *[f"  broadcast join  run {i + 1}: {t:.3f} s" for i, t in enumerate(broadcast_times)],
+            f"  broadcast join  mean:  {mean(broadcast_times):.3f} s",
+            *[f"  sort-merge join run {i + 1}: {t:.3f} s" for i, t in enumerate(sort_merge_times)],
+            f"  sort-merge join mean:  {mean(sort_merge_times):.3f} s",
+            f"  broadcast is {speedup:.1f}% faster than sort-merge on this join",
             "",
             "The broadcast variant ships the ~265-row zone lookup to every executor",
             "(BroadcastExchange) and avoids shuffling the multi-million-row trips",
@@ -515,7 +581,7 @@ class JoinOptimizer:
             + sort_merge_plan + "\n\n" + verdict
         )
         evidence.write("05_explain_broadcast_join.txt",
-                       "BROADCAST JOIN vs SORT-MERGE JOIN — VERBATIM EXPLAIN OUTPUT", content)
+                       "BROADCAST JOIN vs SORT-MERGE JOIN — EXPLAIN + WALL-CLOCK TIMING", content)
 
         if not has_bhj:
             logger.error("BroadcastHashJoin NOT found in broadcast join plan!")
@@ -527,9 +593,13 @@ class JoinOptimizer:
                                      runs: int = 3) -> None:
         """
         Times a shuffle-heavy aggregation under default vs tuned
-        spark.sql.shuffle.partitions, recording RAW per-run timings.
-        AQE is disabled during the benchmark so the partition setting is
-        actually exercised (AQE would otherwise coalesce partitions itself).
+        spark.sql.shuffle.partitions, recording RAW per-run timings, then
+        demonstrates coalesce() on the output write.
+
+        - AQE is disabled during the benchmark so the partition setting is
+          actually exercised (AQE would otherwise coalesce partitions itself).
+        - A warmup run is executed and DISCARDED before each timed group so
+          JIT/scan-cache warmup doesn't bias the first configuration measured.
         """
         logger.info("SHUFFLE PERFORMANCE TUNING BENCHMARK")
         if tuned_partitions is None:
@@ -538,36 +608,57 @@ class JoinOptimizer:
         aqe_before = self.spark.conf.get("spark.sql.adaptive.enabled", "true")
         self.spark.conf.set("spark.sql.adaptive.enabled", "false")
 
-        def run_aggregation() -> float:
-            start = time.time()
-            (
-                df.groupBy("PULocationID", "DOLocationID")
-                .agg(count("VendorID").alias("trip_count"))
-                .write.format("noop").mode("overwrite").save()
-            )
-            return time.time() - start
+        def aggregation() -> DataFrame:
+            return df.groupBy("PULocationID", "DOLocationID").agg(count("VendorID").alias("trip_count"))
 
         results = {}
         for label, n in [("default", default_partitions), ("tuned", tuned_partitions)]:
             self.spark.conf.set("spark.sql.shuffle.partitions", n)
+            logger.info(f"  [{label}: {n} partitions] warmup run (discarded)...")
+            time_noop_write(aggregation())  # warmup, discarded
             timings = []
             for i in range(runs):
-                elapsed = run_aggregation()
+                elapsed = time_noop_write(aggregation())
                 timings.append(elapsed)
                 logger.info(f"  [{label}: {n} partitions] run {i + 1}/{runs}: {elapsed:.3f}s")
             results[label] = (n, timings)
-
-        self.spark.conf.set("spark.sql.adaptive.enabled", aqe_before)
-        self.spark.conf.set("spark.sql.shuffle.partitions", default_partitions)
 
         d_n, d_t = results["default"]
         t_n, t_t = results["tuned"]
         improvement = (mean(d_t) - mean(t_t)) / mean(d_t) * 100
 
+        # ---- coalesce() demonstration on the OUTPUT write ----
+        # Scope requires tuning shuffle partitions AND coalescing output.
+        # The aggregation result is written to parquet twice under the tuned
+        # partition setting: once as-is, once with .coalesce(2). This shows
+        # coalesce's effect on output file count and write time. (For Iceberg
+        # tables, file sizing is instead governed by table properties — see
+        # IcebergWriter — because Iceberg manages its own file layout.)
+        self.spark.conf.set("spark.sql.shuffle.partitions", t_n)
+        os.makedirs(BENCH_DIR, exist_ok=True)
+        plain_dir = os.path.join(BENCH_DIR, "agg_plain")
+        coalesced_dir = os.path.join(BENCH_DIR, "agg_coalesced")
+
+        start = time.time()
+        aggregation().write.mode("overwrite").parquet(plain_dir)
+        plain_time = time.time() - start
+        plain_files = len(glob.glob(os.path.join(plain_dir, "part-*")))
+
+        start = time.time()
+        aggregation().coalesce(2).write.mode("overwrite").parquet(coalesced_dir)
+        coalesced_time = time.time() - start
+        coalesced_files = len(glob.glob(os.path.join(coalesced_dir, "part-*")))
+
+        shutil.rmtree(BENCH_DIR, ignore_errors=True)
+
+        self.spark.conf.set("spark.sql.adaptive.enabled", aqe_before)
+        self.spark.conf.set("spark.sql.shuffle.partitions", default_partitions)
+
         lines = [
             "Benchmark query: df.groupBy(PULocationID, DOLocationID)",
             "                   .agg(count(VendorID)) -> noop sink (full execution,",
             "                 no collect() overhead). AQE disabled during benchmark.",
+            "One warmup run per configuration is executed and discarded.",
             "",
             f"spark.sql.shuffle.partitions = {d_n} (DEFAULT) — raw timings:",
             *[f"  run {i + 1}: {t:.3f} s" for i, t in enumerate(d_t)],
@@ -583,11 +674,21 @@ class JoinOptimizer:
             f"scheduling overhead dominates on this cluster; {t_n} partitions match",
             f"the cluster's available parallelism (defaultParallelism), so each",
             f"task does meaningful work.",
+            "",
+            "COALESCE OUTPUT DEMONSTRATION (parquet write of the aggregation result)",
+            "-" * 78,
+            f"  without coalesce: {plain_files} output files, write took {plain_time:.3f} s",
+            f"  with .coalesce(2): {coalesced_files} output files, write took {coalesced_time:.3f} s",
+            "  coalesce(2) merges the write into 2 tasks/files — fewer, larger",
+            "  files at the cost of reduced write parallelism. For the Iceberg",
+            "  Silver/Gold tables the equivalent control is the",
+            "  write.target-file-size-bytes / write.distribution-mode table",
+            "  properties, since Iceberg governs its own file layout.",
         ]
         content = "\n".join(lines)
         logger.info("\n" + content)
         evidence.write("06_shuffle_tuning_timings.txt",
-                       "SHUFFLE TUNING — RAW TIMING NUMBERS", content)
+                       "SHUFFLE TUNING + COALESCE — RAW TIMING NUMBERS", content)
 
 
 class IcebergWriter:
@@ -601,17 +702,28 @@ class IcebergWriter:
         logger.info(f"Ensuring Iceberg namespace exists: {namespace}")
         self.spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {namespace}")
 
-        logger.info(f"Writing Iceberg table '{table_name}' (overwrite)...")
         # File sizing is controlled via Iceberg table properties — NOT via
         # df.coalesce(), which would only throttle write parallelism without
-        # governing Iceberg's output file layout (review item 10).
-        (
-            df.writeTo(table_name)
-            .using("iceberg")
-            .tableProperty("write.target-file-size-bytes", str(128 * 1024 * 1024))
-            .tableProperty("write.distribution-mode", "hash")
-            .createOrReplace()
-        )
+        # governing Iceberg's output file count.
+        #
+        # Overwrite semantics: the FIRST run creates the table; subsequent
+        # runs use overwrite(lit(True)) — a snapshot-producing OVERWRITE
+        # operation that REPLACES the data while PRESERVING snapshot history,
+        # so <table>.history shows the lineage across runs. createOrReplace()
+        # is deliberately avoided: it drops and recreates the table, erasing
+        # the history the checkpoint asks us to verify.
+        if self.spark.catalog.tableExists(table_name):
+            logger.info(f"Overwriting Iceberg table '{table_name}' (new snapshot, history preserved)...")
+            df.writeTo(table_name).overwrite(lit(True))
+        else:
+            logger.info(f"Creating Iceberg table '{table_name}' (first run)...")
+            (
+                df.writeTo(table_name)
+                .using("iceberg")
+                .tableProperty("write.target-file-size-bytes", str(128 * 1024 * 1024))
+                .tableProperty("write.distribution-mode", "hash")
+                .create()
+            )
 
         count_written = self.spark.read.format("iceberg").load(table_name).count()
         logger.info(f"Verified '{table_name}' row count after write: {count_written:,}")
@@ -638,6 +750,12 @@ class IcebergWriter:
                 df_to_text(files, 20, 120),
                 "",
             ]
+        sections += [
+            "Note: on the first run each table shows a single snapshot from",
+            "CREATE TABLE AS. Run the pipeline a second time to see the snapshot",
+            "lineage grow (operation=overwrite with a parent_id), which is what",
+            "'table metadata reflects new snapshot' verifies.",
+        ]
         evidence.write("07_iceberg_metadata.txt",
                        "ICEBERG TABLE METADATA — SNAPSHOT VERIFICATION", "\n".join(sections))
 
@@ -683,17 +801,19 @@ class PipelineRunner:
             df_rolling = TaxiDataTransformer.calculate_rolling_trip_count(df_cleaned)
             WindowSpotChecker.check(df_cleaned, df_ranked, df_rolling, evidence)
 
-            # STAGE 5: Broadcast Join (verbatim EXPLAIN evidence)
+            # STAGE 5: Broadcast Join (verbatim EXPLAIN + wall-clock timing)
             logger.info("--- STAGE 5: Broadcast Join ---")
             df_zones = loader.load_zone_lookup(LOOKUP_PATH)
             optimizer = JoinOptimizer(spark)
             optimizer.benchmark_joins(df_cleaned, df_zones, evidence)
 
-            # STAGE 6: Shuffle Tuning (raw timing evidence)
+            # STAGE 6: Shuffle Tuning + coalesce output demonstration
             logger.info("--- STAGE 6: Shuffle Tuning Performance Benchmark ---")
             optimizer.run_shuffle_tuning_benchmark(df_cleaned, evidence)
 
-            # STAGE 7: Iceberg Silver + Gold writes & metadata verification
+            # STAGE 7: Iceberg Silver + Gold writes & metadata verification.
+            # BOTH window-function outputs are persisted to the Gold layer:
+            # fare ranking and the rolling 7-day volume.
             if SKIP_ICEBERG:
                 logger.warning("SKIP_ICEBERG=1 — skipping Iceberg writes (local smoke-test mode).")
             else:
@@ -701,10 +821,28 @@ class PipelineRunner:
                 writer = IcebergWriter(spark)
                 writer.write_table(df_cleaned, SILVER_TABLE)
                 writer.write_table(df_ranked, GOLD_TABLE)
-                writer.capture_metadata_evidence([SILVER_TABLE, GOLD_TABLE], evidence)
+                writer.write_table(df_rolling, GOLD_ROLLING_TABLE)
+                writer.capture_metadata_evidence(
+                    [SILVER_TABLE, GOLD_TABLE, GOLD_ROLLING_TABLE], evidence
+                )
 
             logger.info("=" * 80)
             logger.info("WEEK 3 PIPELINE COMPLETED SUCCESSFULLY — evidence in " + EVIDENCE_DIR)
             logger.info("=" * 80)
 
-            
+            if KEEP_UI_SECONDS > 0:
+                logger.info(
+                    f"Keeping SparkSession alive {KEEP_UI_SECONDS}s — open http://localhost:4040 "
+                    "to capture the Spark UI DAG screenshots now."
+                )
+                time.sleep(KEEP_UI_SECONDS)
+
+        except Exception as e:
+            logger.error(f"PIPELINE ERROR OCCURRED: {e}", exc_info=True)
+            raise
+        finally:
+            session_manager.stop_session()
+
+
+if __name__ == "__main__":  # pragma: no cover
+    PipelineRunner().run()

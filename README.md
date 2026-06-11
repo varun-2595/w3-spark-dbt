@@ -39,7 +39,7 @@ Every pipeline run automatically writes verbatim verification evidence (EXPLAIN 
 | `w3_postgres` | 5433 | Raw source tables, dbt warehouse, Iceberg catalog backing store |
 | `w3_minio` | 9000 / 9001 | S3-compatible object storage for the Iceberg warehouse |
 | `w3_rest_catalog` | 8181 | Iceberg REST catalog (JDBC-backed by PostgreSQL) |
-| `spark-master` | 8080 / 7077 / 4040 | Standalone Spark master (8080 = master UI, 4040 = driver UI) |
+| `spark-master` | 8080 / 7077 / 4040 | Standalone Spark master, `bitnamilegacy/spark:3.5.3` (8080 = master UI, 4040 = driver UI) |
 | `spark-worker-1/2` | — | Spark workers connected to the master |
 
 `spark-defaults.conf` sets `spark.master spark://spark-master:7077`, so submitted jobs register with the cluster and are visible in the master UI.
@@ -76,11 +76,15 @@ python -m src.load_to_postgres
 ### 3. Run the PySpark pipeline
 `KEEP_UI_SECONDS` holds the SparkSession open after completion so the Spark UI DAG (http://localhost:4040) can be screenshotted:
 ```bash
-docker exec -u root -e KEEP_UI_SECONDS=600 spark-master /opt/spark/bin/spark-submit \
-  --packages org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.2,org.apache.hadoop:hadoop-aws:3.3.4 \
+docker exec -u root -e KEEP_UI_SECONDS=600 spark-master /opt/bitnami/spark/bin/spark-submit \
+  --packages org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.2,org.apache.iceberg:iceberg-aws-bundle:1.5.2,org.apache.hadoop:hadoop-aws:3.3.4 \
   /opt/spark/workspace/src/pyspark_pipeline.py
 ```
 While it runs: http://localhost:8080 shows the application on 2 workers; http://localhost:4040 shows jobs, stages, and DAG visualizations.
+
+> **Image note:** the assignment prescribes the Bitnami Spark image. Bitnami discontinued its Docker Hub catalog in 2025 and `bitnami/spark` serves no tags anymore; `bitnamilegacy/spark` is Bitnami's official frozen archive of the same images, pinned here to `3.5.3`.
+
+> **Snapshot history:** run the pipeline twice — the second run performs an Iceberg `overwrite` that appends a new snapshot, and `07_iceberg_metadata.txt` will show the multi-snapshot lineage.
 
 ### 4. Build and test the dbt warehouse
 ```bash
@@ -113,9 +117,9 @@ See `docs/evidence/README.md` for the Spark UI screenshot procedure.
 - **Deduplication key**: `trip_fingerprint` is a SHA-256 hash over **all normalized business columns**. dbt computes the identical expression in PostgreSQL via pgcrypto, so fingerprints join across systems.
 - **DataFrame ↔ SQL parity**: outputs verified row-level identical via two-sided `exceptAll` (a `60.0` vs `60.0D` DECIMAL-literal bug was caught this way).
 - **Window functions**: fare rank per zone-hour (`dense_rank`) and rolling 7-day volume per zone (range frame over `unix_timestamp` seconds — whole-second units regardless of the parquet's microsecond precision), both spot-checked against independent queries.
-- **Broadcast join**: zone lookup broadcast to all executors; `BroadcastHashJoin` confirmed in the captured plan, with a forced `SortMergeJoin` for contrast.
-- **Shuffle tuning**: default 200 partitions vs cluster parallelism, benchmarked with AQE disabled against a `noop` sink; raw timings recorded.
-- **Iceberg writes**: Silver + Gold via `writeTo(...).createOrReplace()` with `write.target-file-size-bytes` / `write.distribution-mode` table properties (file layout governed by Iceberg, not `coalesce`); snapshot metadata captured after each write.
+- **Broadcast join**: zone lookup broadcast to all executors; `BroadcastHashJoin` confirmed in the captured plan AND wall-clock timed against a forced `SortMergeJoin` (warmups discarded).
+- **Shuffle tuning + coalesce**: default 200 partitions vs cluster parallelism, benchmarked with AQE disabled against a `noop` sink (warmup runs discarded); plus a `coalesce(2)` output-write demonstration with file counts and timings.
+- **Iceberg writes**: Silver + two Gold tables (fare ranking AND rolling 7-day volume) — first run `create()`s, later runs `overwrite()` so snapshot history is preserved across runs; file layout via `write.target-file-size-bytes` / `write.distribution-mode` table properties (file layout governed by Iceberg, not `coalesce`); snapshot metadata captured after each write.
 
 ---
 

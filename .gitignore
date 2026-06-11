@@ -22,3 +22,6 @@ create_repo_github.py
 
 # dbt local state
 dbt_project/.user.yml
+
+# pipeline coalesce-benchmark scratch dir
+.bench_tmp/

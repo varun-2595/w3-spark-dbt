@@ -40,7 +40,8 @@ services:
       retries: 5
 
   rest-catalog:
-    image: apache/iceberg-rest-fixture:latest
+    # Pinned tag — ':latest' floats and breaks reproducibility
+    image: apache/iceberg-rest-fixture:1.10.1
     container_name: w3_rest_catalog
     ports:
       - "8181:8181"
@@ -78,37 +79,51 @@ services:
       timeout: 10s
       retries: 5
 
+  # NOTE on the image: the assignment prescribes the Bitnami Spark image.
+  # Bitnami discontinued its Docker Hub catalog in 2025 — `bitnami/spark`
+  # now serves no tags. `bitnamilegacy/spark` is the official frozen archive
+  # of the same images, so it is used here with the version pinned.
   spark-master:
-    image: spark:3.5.3
+    image: bitnamilegacy/spark:3.5.3
     container_name: spark-master
-    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    environment:
+      - SPARK_MODE=master
+      - SPARK_MASTER_HOST=spark-master
     ports:
       - "8080:8080"
       - "7077:7077"
       - "4040:4040"   # driver Spark UI (DAG visualization for spark-submit jobs)
     volumes:
-      - ./spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
+      - ./spark-defaults.conf:/opt/bitnami/spark/conf/spark-defaults.conf
       - .:/opt/spark/workspace
     depends_on:
       rest-catalog:
         condition: service_healthy
 
   spark-worker-1:
-    image: spark:3.5.3
+    image: bitnamilegacy/spark:3.5.3
     container_name: spark-worker-1
-    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_CORES=4
+      - SPARK_WORKER_MEMORY=8G
     volumes:
-      - ./spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
+      - ./spark-defaults.conf:/opt/bitnami/spark/conf/spark-defaults.conf
       - .:/opt/spark/workspace
     depends_on:
       - spark-master
 
   spark-worker-2:
-    image: spark:3.5.3
+    image: bitnamilegacy/spark:3.5.3
     container_name: spark-worker-2
-    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_CORES=4
+      - SPARK_WORKER_MEMORY=8G
     volumes:
-      - ./spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
+      - ./spark-defaults.conf:/opt/bitnami/spark/conf/spark-defaults.conf
       - .:/opt/spark/workspace
     depends_on:
       - spark-master
