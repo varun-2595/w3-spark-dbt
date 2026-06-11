@@ -9,12 +9,12 @@ This project demonstrates a production-grade distributed data engineering workfl
 ## 🏗️ Architecture Layout
 
 ```
-                        [ Local Filesystem ]
+                  [ NYC TLC CloudFront CDN ]
                                  │
-                         (generator.py)
+                      (download_tlc_data.py)
                                  │
                                  ▼
-                         [ Parquet/CSV data ]
+              [ REAL TLC Parquet + zone lookup CSV ]
                                  │
          ┌───────────────────────┴───────────────────────┐
          ▼                                               ▼
@@ -46,34 +46,48 @@ Ensure Docker Desktop is running, then spin up the infrastructure:
 docker-compose up -d
 ```
 
-### 2. Generate and Load Mock Data
-Generate mock yellow taxi parquet data and the taxi zone lookup CSV:
+### 2. Download REAL NYC TLC Data and Load Sources
+Download the real NYC TLC Yellow Taxi Parquet files (2024-01, 2024-02 — ~3M rows each)
+and the official taxi zone lookup CSV:
 ```bash
-# Generate Parquet & CSV files
-python -m src.generator
-python generate_lookup_offline.py
+python download_tlc_data.py
 
 # Initialize MinIO bucket & upload lookup CSV
 python create_bucket.py
 python upload_lookup.py
 
-# Ingest raw source data into PostgreSQL
+# Ingest raw source data into PostgreSQL (for the dbt warehouse)
 python -m src.load_to_postgres
 ```
+> `src/generator.py` now only produces clearly-named `synthetic_tripdata_*` fixtures
+> for the SCD2 simulation test — it is **not** a pipeline data source.
 
 ### 3. Run the PySpark Pipeline
-Submit the medallion processing job to the standalone Spark cluster:
+Submit the medallion processing job to the standalone Spark cluster. `KEEP_UI_SECONDS`
+holds the SparkSession open after completion so the Spark UI DAG (http://localhost:4040)
+can be screenshotted:
 ```bash
-docker exec -u root spark-master /opt/spark/bin/spark-submit \
+docker exec -u root -e KEEP_UI_SECONDS=600 spark-master /opt/spark/bin/spark-submit \
   --packages org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.2,org.apache.hadoop:hadoop-aws:3.3.4 \
   /opt/spark/workspace/src/pyspark_pipeline.py
 ```
+
+#### Evidence artifacts (written automatically to `docs/evidence/`)
+Every run regenerates verbatim evidence for each checkpoint — data profile and
+partition skew, the DataFrame-vs-SQL EXPLAIN plan comparison, the row-level
+`exceptAll` diff, window-function spot-checks, broadcast vs sort-merge EXPLAIN
+output, raw shuffle-tuning timings with % improvement, and Iceberg
+snapshot/history/files metadata. See `docs/evidence/README.md` for the file map
+and the Spark UI screenshot procedure.
+
 #### Key Spark Highlights:
-- **Cleaning & Deduplication**: Cleans coordinate boundaries, calculates trip durations, masks driver names (PII), and deduplicates by a `SHA-256` trip fingerprint.
-- **Spark SQL Parity**: Verifies that the DataFrame API and Spark SQL queries produce identical outputs (`✅ SUCCESS`).
-- **Window Functions**: Ranks top fares per zone-hour and calculates rolling 7-day volume per zone.
-- **Optimized Join**: Employs `BroadcastHashJoin` over `SortMergeJoin` for joining zones lookup data.
-- **Shuffle Partitions Tuning**: Setting `spark.sql.shuffle.partitions = 8` (down from default 200) resulted in a **~50% performance speedup**.
+- **Real data at scale**: Ingests real TLC monthly Parquet (multi-million rows), profiled for partition-level skew.
+- **Cleaning & Deduplication**: Validates fares/durations/zones and deduplicates by a `SHA-256` trip fingerprint computed over **all normalized business columns** — the same expression dbt uses in PostgreSQL (pgcrypto), so fingerprints join across systems.
+- **Spark SQL Parity**: DataFrame API and Spark SQL outputs verified **row-level identical** via two-sided `exceptAll` diff; execution plans captured and compared.
+- **Window Functions**: Ranks top fares per zone-hour and computes rolling 7-day volume per zone (range frame over `unix_timestamp` seconds), both spot-checked against independent queries.
+- **Optimized Join**: `BroadcastHashJoin` vs `SortMergeJoin` plans captured verbatim in evidence.
+- **Shuffle Tuning**: 200 vs 8 partitions benchmarked with AQE disabled, raw per-run timings recorded.
+- **Iceberg Silver + Gold**: Written via `writeTo(...).createOrReplace()` with `write.target-file-size-bytes` / `write.distribution-mode` table properties (file layout governed by Iceberg, not `coalesce`); snapshot metadata captured as evidence.
 
 ---
 

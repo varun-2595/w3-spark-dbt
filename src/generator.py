@@ -4,9 +4,17 @@ import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
 
-from src.config import RAW_BATCH_1_PATH, RAW_BATCH_2_PATH
+from src.config import DATA_DIR
 
 logger = logging.getLogger(__name__)
+
+# NOTE: This generator produces SYNTHETIC TEST FIXTURES ONLY (used by the SCD2
+# simulation and unit-style checks). It is NOT the pipeline data source — the
+# pipeline ingests REAL NYC TLC data fetched by download_tlc_data.py.
+# Output filenames are deliberately distinct so fixtures can never be mistaken
+# for, or overwrite, real TLC data.
+RAW_BATCH_1_PATH = os.path.join(DATA_DIR, "synthetic_tripdata_batch1.parquet")
+RAW_BATCH_2_PATH = os.path.join(DATA_DIR, "synthetic_tripdata_batch2.parquet")
 
 # Seed drivers list for PII masking test
 DRIVERS = [

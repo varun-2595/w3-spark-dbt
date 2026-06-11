@@ -1,0 +1,87 @@
+==============================================================================
+ICEBERG TABLE METADATA — SNAPSHOT VERIFICATION
+Captured: 2026-06-11 08:31:28
+==============================================================================
+
+### demo.nyc_taxi.trips_silver — snapshots ###
++-----------------------+-------------------+---------+---------+
+|committed_at           |snapshot_id        |parent_id|operation|
++-----------------------+-------------------+---------+---------+
+|2026-06-11 08:31:12.285|7093291036992685760|NULL     |append   |
++-----------------------+-------------------+---------+---------+
+
+### demo.nyc_taxi.trips_silver — history ###
++-----------------------+-------------------+-------------------+
+|made_current_at        |snapshot_id        |is_current_ancestor|
++-----------------------+-------------------+-------------------+
+|2026-06-11 08:31:12.285|7093291036992685760|true               |
++-----------------------+-------------------+-------------------+
+
+### demo.nyc_taxi.trips_silver — data files ###
++---------------------------------------------------------------------------------------------------------+------------+------------------+
+|                                                                                                file_path|record_count|file_size_in_bytes|
++---------------------------------------------------------------------------------------------------------+------------+------------------+
+|s3://warehouse/nyc_taxi/trips_silver/data/00000-4217-06514ff3-d2fa-4497-9162-5a4db87d1326-0-00001.parquet|       28900|           1654442|
+|s3://warehouse/nyc_taxi/trips_silver/data/00001-4215-06514ff3-d2fa-4497-9162-5a4db87d1326-0-00001.parquet|       29172|           1666887|
+|s3://warehouse/nyc_taxi/trips_silver/data/00002-4216-06514ff3-d2fa-4497-9162-5a4db87d1326-0-00001.parquet|       29280|           1675394|
+|s3://warehouse/nyc_taxi/trips_silver/data/00003-4218-06514ff3-d2fa-4497-9162-5a4db87d1326-0-00001.parquet|       29194|           1670670|
+|s3://warehouse/nyc_taxi/trips_silver/data/00004-4221-06514ff3-d2fa-4497-9162-5a4db87d1326-0-00001.parquet|       29013|           1656364|
+|s3://warehouse/nyc_taxi/trips_silver/data/00005-4219-06514ff3-d2fa-4497-9162-5a4db87d1326-0-00001.parquet|       29387|           1680857|
+|s3://warehouse/nyc_taxi/trips_silver/data/00006-4220-06514ff3-d2fa-4497-9162-5a4db87d1326-0-00001.parquet|       29038|           1660466|
+|s3://warehouse/nyc_taxi/trips_silver/data/00007-4222-06514ff3-d2fa-4497-9162-5a4db87d1326-0-00001.parquet|       29335|           1673494|
+|s3://warehouse/nyc_taxi/trips_silver/data/00008-4225-06514ff3-d2fa-4497-9162-5a4db87d1326-0-00001.parquet|       28917|           1655149|
+|s3://warehouse/nyc_taxi/trips_silver/data/00009-4223-06514ff3-d2fa-4497-9162-5a4db87d1326-0-00001.parquet|       28875|           1652578|
+|s3://warehouse/nyc_taxi/trips_silver/data/00010-4224-06514ff3-d2fa-4497-9162-5a4db87d1326-0-00001.parquet|       29054|           1659188|
+|s3://warehouse/nyc_taxi/trips_silver/data/00011-4226-06514ff3-d2fa-4497-9162-5a4db87d1326-0-00001.parquet|       28954|           1658049|
+|s3://warehouse/nyc_taxi/trips_silver/data/00012-4229-06514ff3-d2fa-4497-9162-5a4db87d1326-0-00001.parquet|       29025|           1657733|
+|s3://warehouse/nyc_taxi/trips_silver/data/00013-4227-06514ff3-d2fa-4497-9162-5a4db87d1326-0-00001.parquet|       29226|           1672098|
+|s3://warehouse/nyc_taxi/trips_silver/data/00014-4228-06514ff3-d2fa-4497-9162-5a4db87d1326-0-00001.parquet|       29484|           1684031|
+|s3://warehouse/nyc_taxi/trips_silver/data/00015-4230-06514ff3-d2fa-4497-9162-5a4db87d1326-0-00001.parquet|       29087|           1664748|
+|s3://warehouse/nyc_taxi/trips_silver/data/00016-4233-06514ff3-d2fa-4497-9162-5a4db87d1326-0-00001.parquet|       29339|           1674149|
+|s3://warehouse/nyc_taxi/trips_silver/data/00017-4231-06514ff3-d2fa-4497-9162-5a4db87d1326-0-00001.parquet|       29397|           1680326|
+|s3://warehouse/nyc_taxi/trips_silver/data/00018-4232-06514ff3-d2fa-4497-9162-5a4db87d1326-0-00001.parquet|       28728|           1643140|
+|s3://warehouse/nyc_taxi/trips_silver/data/00019-4234-06514ff3-d2fa-4497-9162-5a4db87d1326-0-00001.parquet|       28841|           1649069|
++---------------------------------------------------------------------------------------------------------+------------+------------------+
+only showing top 20 rows
+
+
+### demo.nyc_taxi.trips_gold — snapshots ###
++-----------------------+-------------------+---------+---------+
+|committed_at           |snapshot_id        |parent_id|operation|
++-----------------------+-------------------+---------+---------+
+|2026-06-11 08:31:26.366|3117749050067978311|NULL     |append   |
++-----------------------+-------------------+---------+---------+
+
+### demo.nyc_taxi.trips_gold — history ###
++-----------------------+-------------------+-------------------+
+|made_current_at        |snapshot_id        |is_current_ancestor|
++-----------------------+-------------------+-------------------+
+|2026-06-11 08:31:26.366|3117749050067978311|true               |
++-----------------------+-------------------+-------------------+
+
+### demo.nyc_taxi.trips_gold — data files ###
++-------------------------------------------------------------------------------------------------------+------------+------------------+
+|                                                                                              file_path|record_count|file_size_in_bytes|
++-------------------------------------------------------------------------------------------------------+------------+------------------+
+|s3://warehouse/nyc_taxi/trips_gold/data/00000-4617-86f93970-2748-4e4a-9277-783ea42778d9-0-00001.parquet|      195479|          10420754|
+|s3://warehouse/nyc_taxi/trips_gold/data/00001-4618-86f93970-2748-4e4a-9277-783ea42778d9-0-00001.parquet|      232520|          12457974|
+|s3://warehouse/nyc_taxi/trips_gold/data/00002-4619-86f93970-2748-4e4a-9277-783ea42778d9-0-00001.parquet|      213575|          11481431|
+|s3://warehouse/nyc_taxi/trips_gold/data/00003-4620-86f93970-2748-4e4a-9277-783ea42778d9-0-00001.parquet|      242953|          13006742|
+|s3://warehouse/nyc_taxi/trips_gold/data/00004-4621-86f93970-2748-4e4a-9277-783ea42778d9-0-00001.parquet|      233273|          12552007|
+|s3://warehouse/nyc_taxi/trips_gold/data/00005-4622-86f93970-2748-4e4a-9277-783ea42778d9-0-00001.parquet|      228315|          12252224|
+|s3://warehouse/nyc_taxi/trips_gold/data/00006-4623-86f93970-2748-4e4a-9277-783ea42778d9-0-00001.parquet|      215649|          11578236|
+|s3://warehouse/nyc_taxi/trips_gold/data/00007-4624-86f93970-2748-4e4a-9277-783ea42778d9-0-00001.parquet|      231361|          12355868|
+|s3://warehouse/nyc_taxi/trips_gold/data/00008-4625-86f93970-2748-4e4a-9277-783ea42778d9-0-00001.parquet|      232047|          12403413|
+|s3://warehouse/nyc_taxi/trips_gold/data/00009-4626-86f93970-2748-4e4a-9277-783ea42778d9-0-00001.parquet|      227989|          12218040|
+|s3://warehouse/nyc_taxi/trips_gold/data/00010-4627-86f93970-2748-4e4a-9277-783ea42778d9-0-00001.parquet|      225311|          12080666|
+|s3://warehouse/nyc_taxi/trips_gold/data/00011-4628-86f93970-2748-4e4a-9277-783ea42778d9-0-00001.parquet|      240729|          12922408|
+|s3://warehouse/nyc_taxi/trips_gold/data/00012-4629-86f93970-2748-4e4a-9277-783ea42778d9-0-00001.parquet|      240704|          12903333|
+|s3://warehouse/nyc_taxi/trips_gold/data/00013-4630-86f93970-2748-4e4a-9277-783ea42778d9-0-00001.parquet|      235103|          12613287|
+|s3://warehouse/nyc_taxi/trips_gold/data/00014-4631-86f93970-2748-4e4a-9277-783ea42778d9-0-00001.parquet|      213755|          11446267|
+|s3://warehouse/nyc_taxi/trips_gold/data/00015-4632-86f93970-2748-4e4a-9277-783ea42778d9-0-00001.parquet|      234775|          12625804|
+|s3://warehouse/nyc_taxi/trips_gold/data/00016-4633-86f93970-2748-4e4a-9277-783ea42778d9-0-00001.parquet|      239540|          12830578|
+|s3://warehouse/nyc_taxi/trips_gold/data/00017-4634-86f93970-2748-4e4a-9277-783ea42778d9-0-00001.parquet|      239826|          12831192|
+|s3://warehouse/nyc_taxi/trips_gold/data/00018-4635-86f93970-2748-4e4a-9277-783ea42778d9-0-00001.parquet|      228848|          12222331|
+|s3://warehouse/nyc_taxi/trips_gold/data/00019-4636-86f93970-2748-4e4a-9277-783ea42778d9-0-00001.parquet|      172198|           9272554|
++-------------------------------------------------------------------------------------------------------+------------+------------------+
+only showing top 20 rows

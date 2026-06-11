@@ -1,0 +1,66 @@
+version: 2
+
+models:
+  - name: fact_trips
+    description: Trip fact table keyed by trip_fingerprint (SHA-256).
+    columns:
+      - name: trip_fingerprint
+        tests:
+          - unique
+          - not_null
+      - name: pickup_location_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_location')
+              field: location_id
+      - name: dropoff_location_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_location')
+              field: location_id
+      - name: rate_code_id
+        tests:
+          - relationships:
+              to: ref('dim_rate_code')
+              field: rate_code_id
+      - name: payment_type_id
+        tests:
+          - relationships:
+              to: ref('dim_payment_type')
+              field: payment_type_id
+      - name: pickup_date
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_date')
+              field: date_day
+
+  - name: dim_location
+    columns:
+      - name: location_id
+        tests:
+          - unique
+          - not_null
+
+  - name: dim_date
+    columns:
+      - name: date_day
+        tests:
+          - unique
+          - not_null
+
+  - name: dim_rate_code
+    columns:
+      - name: rate_code_id
+        tests:
+          - unique
+          - not_null
+
+  - name: dim_payment_type
+    columns:
+      - name: payment_type_id
+        tests:
+          - unique
+          - not_null

@@ -85,6 +85,7 @@ services:
     ports:
       - "8080:8080"
       - "7077:7077"
+      - "4040:4040"   # driver Spark UI (DAG visualization for spark-submit jobs)
     volumes:
       - ./spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
       - .:/opt/spark/workspace

@@ -12,6 +12,10 @@ seed-paths: ["seeds"]
 macro-paths: ["macros"]
 snapshot-paths: ["snapshots"]
 
+# pgcrypto provides digest(..., 'sha256') for the staging trip_fingerprint
+on-run-start:
+  - "CREATE EXTENSION IF NOT EXISTS pgcrypto"
+
 clean-targets:
   - "target"
   - "dbt_packages"
@@ -20,11 +24,4 @@ models:
   taxi_warehouse:
     staging:
       +materialized: view
-      +schema: staging
-    marts:
-      +materialized: table
-      +schema: marts
-
-snapshots:
-  taxi_warehouse:
-    +target_schema: snapshots
+      

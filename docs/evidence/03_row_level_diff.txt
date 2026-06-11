@@ -1,0 +1,13 @@
+==============================================================================
+ROW-LEVEL DIFF — DataFrame API vs Spark SQL
+Captured: 2026-06-11 08:28:44
+==============================================================================
+
+Columns compared (21): Airport_fee, DOLocationID, PULocationID, RatecodeID, VendorID, congestion_surcharge, extra, fare_amount, improvement_surcharge, mta_tax, passenger_count, payment_type, store_and_fwd_flag, tip_amount, tolls_amount, total_amount, tpep_dropoff_datetime, tpep_pickup_datetime, trip_distance, trip_duration_minutes, trip_fingerprint
+
+DataFrame API output rows: 5,828,220
+Spark SQL    output rows: 5,828,220
+rows in API output missing from SQL output (exceptAll): 0
+rows in SQL output missing from API output (exceptAll): 0
+
+RESULT: PASS — outputs are row-level identical

@@ -1,0 +1,20 @@
+==============================================================================
+WINDOW FUNCTION SPOT-CHECKS (manual verification)
+Captured: 2026-06-11 08:30:45
+==============================================================================
+
+SPOT-CHECK 1: top-ranked trip by fare per zone per hour
+  Busiest (zone, hour):              (161, 18) — 27,120 trips
+  fare of fare_rank=1 (window fn):   120.0
+  max(fare_amount) (independent agg): 120.0
+  RESULT: PASS — values match
+
+SPOT-CHECK 2: rolling 7-day trip volume per zone
+  Zone: 161 | anchor pickup_ts (epoch seconds): 1709251128
+  rolling_7d_trip_count (range window): 36031
+  direct recount (filter ts-7d..ts):    36031
+  RESULT: PASS — values match
+
+Precision note: unix_timestamp() returns whole seconds (BIGINT)
+regardless of the microsecond precision of the parquet timestamps,
+so rangeBetween(-7*86400, 0) uses the correct unit.

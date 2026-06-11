@@ -20,36 +20,61 @@ staged as (
         cast("total_amount" as numeric(10, 2)) as total_amount,
         cast("store_and_fwd_flag" as varchar(1)) as store_and_fwd_flag,
         cast("driver_name" as varchar(100)) as driver_name,
-        
-        -- Simulated dimension keys
-        case 
+
+        -- Simulated dimension keys (kept for star-schema compatibility)
+        case
             when cast("VendorID" as integer) = 1 then 1
-            else (cast("passenger_count" as integer) % 5) + 1 
+            else (cast("passenger_count" as integer) % 5) + 1
         end as rate_code_id,
         (cast("passenger_count" as integer) % 2) + 1 as payment_type_id,
-        
+
         -- Calculated fields
         extract(epoch from (cast("tpep_dropoff_datetime" as timestamp) - cast("tpep_pickup_datetime" as timestamp))) / 60.0 as trip_duration_minutes,
-        
-        -- Mask driver name to initials
-        case 
+
+        -- Mask driver name to initials (real NYC TLC data carries no driver PII,
+        -- so this is NULL-safe: NULL driver_name -> NULL initials)
+        case
+            when "driver_name" is null then null
             when array_length(string_to_array(cast("driver_name" as varchar(100)), ' '), 1) >= 2 then
                 concat(
                     substring(split_part(cast("driver_name" as varchar(100)), ' ', 1), 1, 1), '.',
                     substring(split_part(cast("driver_name" as varchar(100)), ' ', 2), 1, 1), '.'
                 )
-            else 
+            else
                 concat(substring(cast("driver_name" as varchar(100)), 1, 1), '.')
         end as driver_initials,
-        
-        -- Unique fingerprint hash
-        md5(concat_ws('||', 
-            cast("VendorID" as varchar), 
-            cast("tpep_pickup_datetime" as varchar), 
-            cast("PULocationID" as varchar), 
-            cast("DOLocationID" as varchar)
-        )) as trip_fingerprint
-        
+
+        -- Unique fingerprint hash.
+        -- SHA-256 (lowercase hex via pgcrypto digest), matching EXACTLY the
+        -- normalized expression used in src/pyspark_pipeline.py (FINGERPRINT_SPEC):
+        -- same algorithm, same column order, same normalization
+        -- (ints -> bigint::text, timestamps -> 'YYYY-MM-DD HH24:MI:SS',
+        --  monetary/decimal -> numeric(12,2)::text). concat_ws skips NULLs in
+        -- both PostgreSQL and Spark, so columns absent on either side
+        -- (e.g. driver_name in real TLC data) drop out identically.
+        encode(digest(concat_ws('||',
+            cast(cast("VendorID" as bigint) as varchar),
+            to_char(cast("tpep_pickup_datetime" as timestamp), 'YYYY-MM-DD HH24:MI:SS'),
+            to_char(cast("tpep_dropoff_datetime" as timestamp), 'YYYY-MM-DD HH24:MI:SS'),
+            cast(cast("passenger_count" as bigint) as varchar),
+            cast(cast("trip_distance" as numeric(12,2)) as varchar),
+            cast(cast("RatecodeID" as bigint) as varchar),
+            cast("store_and_fwd_flag" as varchar),
+            cast(cast("PULocationID" as bigint) as varchar),
+            cast(cast("DOLocationID" as bigint) as varchar),
+            cast(cast("payment_type" as bigint) as varchar),
+            cast(cast("fare_amount" as numeric(12,2)) as varchar),
+            cast(cast("extra" as numeric(12,2)) as varchar),
+            cast(cast("mta_tax" as numeric(12,2)) as varchar),
+            cast(cast("tip_amount" as numeric(12,2)) as varchar),
+            cast(cast("tolls_amount" as numeric(12,2)) as varchar),
+            cast(cast("improvement_surcharge" as numeric(12,2)) as varchar),
+            cast(cast("total_amount" as numeric(12,2)) as varchar),
+            cast(cast("congestion_surcharge" as numeric(12,2)) as varchar),
+            cast(cast("Airport_fee" as numeric(12,2)) as varchar),
+            cast("driver_name" as varchar)
+        ), 'sha256'), 'hex') as trip_fingerprint
+
     from source
 ),
 
@@ -67,7 +92,7 @@ deduped as (
     from filtered
 )
 
-select 
+select
     vendor_id,
     pickup_datetime,
     dropoff_datetime,
@@ -83,7 +108,6 @@ select
     improvement_surcharge,
     total_amount,
     store_and_fwd_flag,
-    driver_name,
     rate_code_id,
     payment_type_id,
     trip_duration_minutes,

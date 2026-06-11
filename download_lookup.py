@@ -5,7 +5,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-URL = "https://d37ci6xzvtychx.cloudfront.net/misc/taxi_zone_lookup.csv"
+URL = "https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv"
 OUTPUT_DIR = "data"
 OUTPUT_PATH = os.path.join(OUTPUT_DIR, "taxi_zone_lookup.csv")
 
