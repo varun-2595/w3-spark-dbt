@@ -77,6 +77,7 @@ python -m src.load_to_postgres
 `KEEP_UI_SECONDS` holds the SparkSession open after completion so the Spark UI DAG (http://localhost:4040) can be screenshotted:
 ```bash
 docker exec -u root -e KEEP_UI_SECONDS=600 spark-master /opt/bitnami/spark/bin/spark-submit \
+  --conf spark.jars.ivy=/tmp/.ivy2 \
   --packages org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.2,org.apache.iceberg:iceberg-aws-bundle:1.5.2,org.apache.hadoop:hadoop-aws:3.3.4 \
   /opt/spark/workspace/src/pyspark_pipeline.py
 ```
